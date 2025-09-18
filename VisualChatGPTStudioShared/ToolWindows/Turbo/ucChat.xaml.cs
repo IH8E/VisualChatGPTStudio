@@ -661,15 +661,22 @@ namespace JeffPires.VisualChatGPTStudio.ToolWindows.Turbo
 
                 cancellationTokenSource = new();
 
-                (string, List<FunctionResult>) result = await SendRequestAsync(cancellationTokenSource);
-
-                if (result.Item2 != null && result.Item2.Any())
+                if (options.CompletionStream)
                 {
-                    await HandleFunctionsCallsAsync(result.Item2, cancellationTokenSource);
+                    await apiChat.StreamResponseFromChatbotAsync(HandleResponseChunk);
                 }
                 else
                 {
-                    HandleResponse(commandType, shiftKeyPressed, result.Item1);
+                    (string, List<FunctionResult>) result = await SendRequestAsync(cancellationTokenSource);
+
+                    if (result.Item2 != null && result.Item2.Any())
+                    {
+                        await HandleFunctionsCallsAsync(result.Item2, cancellationTokenSource);
+                    }
+                    else
+                    {
+                        HandleResponse(commandType, shiftKeyPressed, result.Item1);
+                    }
                 }
 
                 if (firstMessage)
@@ -791,6 +798,10 @@ namespace JeffPires.VisualChatGPTStudio.ToolWindows.Turbo
         /// <summary>
         /// Handles the response based on the command type and shift key state, updating the document view or chat list control items accordingly.
         /// </summary>
+        private void HandleResponseChunk(string response)
+        {
+            HandleResponse(RequestType.Request, false, response);
+        }
         private void HandleResponse(RequestType commandType, bool shiftKeyPressed, string response)
         {
             if (commandType == RequestType.Code && !shiftKeyPressed)
@@ -811,8 +822,20 @@ namespace JeffPires.VisualChatGPTStudio.ToolWindows.Turbo
             }
             else
             {
-                messagesForDatabase.Add(new() { Order = messagesForDatabase.Count + 1, Segments = [new() { Author = IdentifierEnum.ChatGPT, Content = response }] });
-                AddMessagesHtml(IdentifierEnum.ChatGPT, response);
+                var last = messagesForDatabase.Last();
+                if (last.Segments.First().Author == IdentifierEnum.ChatGPT)
+                {
+                    string result = last.Segments.First().Content + response;
+                    last.Segments.First().Content = result;
+
+                    AddMessagesHtml(IdentifierEnum.ChatGPT, response, true);
+                }
+                else
+                {
+                    messagesForDatabase.Add(new() { Order = messagesForDatabase.Count + 1, Segments = [new() { Author = IdentifierEnum.ChatGPT, Content = response }] });
+
+                    AddMessagesHtml(IdentifierEnum.ChatGPT, response, false);
+                }
             }
 
             UpdateBrowser();
@@ -924,8 +947,20 @@ namespace JeffPires.VisualChatGPTStudio.ToolWindows.Turbo
         /// </summary>
         /// <param name="author">The author of the message, used to determine the avatar image.</param>
         /// <param name="content">The message content in Markdown format to be converted and displayed.</param>
-        private void AddMessagesHtml(IdentifierEnum author, string content)
+        /// <param name="replace">Load all changes from messagesForDatabase</param>
+        private void AddMessagesHtml(IdentifierEnum author, string content, bool replace = false)
         {
+            if (replace)
+            {
+                messagesHtml.Remove(0, messagesHtml.Length);
+                foreach (var item in messagesForDatabase)
+                {
+                    var segments = item.Segments.First();
+                    AddMessagesHtml(segments.Author, segments.Content);
+                }
+
+                return;
+            }
             string htmlContent;
 
             string authorIcon = author switch
